@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COEP require-corp probe</title>
+<style>
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 1.25rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  .verdict { padding: .75rem 1rem; border-radius: .5rem; font-weight: 700; margin-bottom: 1rem; }
+  .yes { background: #d6f5d6; color: #14532d; } .no { background: #ffd9d9; color: #7f1d1d; }
+  .wait { background: #eee; color: #444; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  td { padding: .35rem .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  td:first-child { color: #555; white-space: nowrap; }
+  code { font-size: .8em; word-break: break-all; }
+</style>
+
+<h1>COEP <code>require-corp</code> via service worker</h1>
+<div id="verdict" class="verdict wait">registering service worker…</div>
+<table id="rows"></table>
+
+<script>
+// localStorage, not sessionStorage: the COOP flip swaps the browsing context
+// group and mints a fresh sessionStorage, which is exactly the reload loop
+// prometheos-host/src/core/serviceWorkerBoot.ts documents hitting on Safari.
+const FLAG = 'COI_PROBE_RELOADED';
+
+const rows = document.getElementById('rows');
+const row = (k, v) => {
+  const tr = rows.insertRow();
+  tr.insertCell().textContent = k;
+  tr.insertCell().innerHTML = v;
+};
+
+// Does a cross-origin subresource survive require-corp? Loading it is the test:
+// under require-corp a resource with no CORP header is blocked and fires onerror.
+const probeImage = (label, url, crossorigin) =>
+  new Promise((resolve) => {
+    const img = new Image();
+    if (crossorigin) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve([label, '<b style="color:#14532d">loads</b>']);
+    img.onerror = () => resolve([label, '<b style="color:#7f1d1d">BLOCKED</b>']);
+    setTimeout(() => resolve([label, 'timeout']), 8000);
+    img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+  });
+
+const probeAudio = (label, url) =>
+  new Promise((resolve) => {
+    const a = new Audio();
+    a.oncanplaythrough = () => resolve([label, '<b style="color:#14532d">loads</b>']);
+    a.onerror = () => resolve([label, '<b style="color:#7f1d1d">BLOCKED</b>']);
+    setTimeout(() => resolve([label, 'timeout']), 8000);
+    a.src = url;
+  });
+
+async function report() {
+  const isolated = Boolean(globalThis.crossOriginIsolated);
+  const sab = (() => { try { new SharedArrayBuffer(8); return true; } catch { return false; } })();
+
+  const v = document.getElementById('verdict');
+  v.className = 'verdict ' + (isolated && sab ? 'yes' : 'no');
+  v.textContent = isolated && sab
+    ? 'ISOLATED — require-corp via service worker works here, SharedArrayBuffer available.'
+    : `NOT isolated (crossOriginIsolated=${isolated}, SharedArrayBuffer=${sab}).`;
+
+  row('userAgent', '<code>' + navigator.userAgent + '</code>');
+  row('sw controller', String(Boolean(navigator.serviceWorker.controller)));
+  row('crossOriginIsolated', String(isolated));
+  row('SharedArrayBuffer', String(sab));
+
+  // The four real third-party resources the apps actually load today.
+  const results = await Promise.all([
+    probeImage('Google Fonts CSS host (has CORP)', 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiA.woff2', false),
+    probeImage('images.unsplash.com (has CORP)', 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=64&h=64&q=80', false),
+    probeImage('api.builder.io, no crossorigin', 'https://api.builder.io/api/v1/image/assets/TEMP/844c163f1022508973c65c6c0ee181f52f789885?width=64', false),
+    probeImage('api.builder.io, crossorigin=anon', 'https://api.builder.io/api/v1/image/assets/TEMP/844c163f1022508973c65c6c0ee181f52f789885?width=64', true),
+    probeAudio('soundhelix.com mp3 (no CORS/CORP)', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'),
+  ]);
+  for (const [k, val] of results) row(k, val);
+}
+
+async function boot() {
+  if (!('serviceWorker' in navigator)) {
+    document.getElementById('verdict').textContent = 'No service worker support.';
+    return;
+  }
+  await navigator.serviceWorker.register('coi-sw.js', { scope: './' });
+
+  // First navigation of a session predates SW control, so it never carried the
+  // headers. One reload fixes it; the flag stops a browser that can never
+  // satisfy require-corp from looping forever.
+  if (navigator.serviceWorker.controller) {
+    localStorage.removeItem(FLAG);
+    return report();
+  }
+  if (localStorage.getItem(FLAG) !== 'true') {
+    localStorage.setItem(FLAG, 'true');
+    location.reload();
+    return;
+  }
+  report();
+}
+
+boot();
+</script>
