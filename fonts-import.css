@@ -1,0 +1,4 @@
+/* Exactly spark-audio's shape: a same-origin stylesheet that @imports Google
+   Fonts. @import cannot carry a crossorigin attribute, so under require-corp it
+   stands or falls purely on the CORP header Google sends. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap");

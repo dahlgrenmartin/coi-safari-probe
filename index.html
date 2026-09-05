@@ -43,6 +43,30 @@ const probeImage = (label, url, crossorigin) =>
     img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
   });
 
+// A .woff2 through <img> can never decode, so onerror says nothing about CORP.
+// Fonts have to be tested as fonts: load the stylesheet, then ask whether the
+// family actually became usable.
+const probeStylesheet = (label, href, family) =>
+  new Promise((resolve) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    const settle = async (ok) => {
+      if (!ok) return resolve([label, '<b style="color:#7f1d1d">BLOCKED (stylesheet)</b>']);
+      try {
+        await document.fonts.load('16px "' + family + '"');
+        const usable = document.fonts.check('16px "' + family + '"');
+        resolve([label, usable
+          ? '<b style="color:#14532d">loads</b>'
+          : '<b style="color:#7f1d1d">BLOCKED (font file)</b>']);
+      } catch (e) { resolve([label, 'error: ' + e.message]); }
+    };
+    link.onload = () => settle(true);
+    link.onerror = () => settle(false);
+    setTimeout(() => resolve([label, 'timeout']), 8000);
+    document.head.appendChild(link);
+  });
+
 const probeAudio = (label, url) =>
   new Promise((resolve) => {
     const a = new Audio();
@@ -69,7 +93,8 @@ async function report() {
 
   // The four real third-party resources the apps actually load today.
   const results = await Promise.all([
-    probeImage('Google Fonts CSS host (has CORP)', 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiA.woff2', false),
+    probeStylesheet('Google Fonts via <link> (spotify-player)', 'https://fonts.googleapis.com/css2?family=Manrope:wght@400;700&display=swap', 'Manrope'),
+    probeStylesheet('Google Fonts via CSS @import (spark-audio)', 'fonts-import.css', 'Inter'),
     probeImage('images.unsplash.com (has CORP)', 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=64&h=64&q=80', false),
     probeImage('api.builder.io, no crossorigin', 'https://api.builder.io/api/v1/image/assets/TEMP/844c163f1022508973c65c6c0ee181f52f789885?width=64', false),
     probeImage('api.builder.io, crossorigin=anon', 'https://api.builder.io/api/v1/image/assets/TEMP/844c163f1022508973c65c6c0ee181f52f789885?width=64', true),
